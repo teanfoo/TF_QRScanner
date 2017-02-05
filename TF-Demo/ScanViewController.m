@@ -133,7 +133,7 @@
 - (void)webViewDidFinishLoad:(UIWebView *)webView {
     self.navigationItem.title = @"浏览网页";// 设置标题
 }
-- (void)webView:(UIWebView *)webView didFailLoadWithError:(nullable NSError *)error {
+- (void)webView:(UIWebView *)webView didFailLoadWithError:(NSError *)error {
     self.navigationItem.title = @"加载失败";// 设置标题
 
 }
