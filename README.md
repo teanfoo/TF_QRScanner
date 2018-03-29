@@ -1,12 +1,12 @@
-![logo](https://raw.githubusercontent.com/teanfoo/TF_QRScanner/master/Images/AppIconRound.png)
+<img src="https://raw.githubusercontent.com/teanfoo/TF_QRScanner/master/Images/AppIconRound.png" width="240" height="240">
 # TF_QRScanner
 * A fast integrated solution for QR scanner.
 * 一种快速集成“二维码扫描器”的解决方案。
 ------------
 # Demo screenshot
-![screenshot1](https://raw.githubusercontent.com/teanfoo/TF_QRScanner/master/Images/DemoImage1.png) ![screenshot2](https://raw.githubusercontent.com/teanfoo/TF_QRScanner/master/Images/DemoImage2.png)
+<img src="https://raw.githubusercontent.com/teanfoo/TF_QRScanner/master/Images/DemoImage1.png" width="240" height="426"> <img src="https://raw.githubusercontent.com/teanfoo/TF_QRScanner/master/Images/DemoImage2.png" width="240" height="426">
 
----
+------------
 # 使用方法
 ### 一、扫描二维码
 ##### 1. 引用头文件：
