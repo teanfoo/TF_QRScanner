@@ -29,23 +29,25 @@
     // 去掉导航栏返回按钮的文字
     [[UIBarButtonItem appearance] setBackButtonTitlePositionAdjustment:UIOffsetMake(0, -60) forBarMetrics:UIBarMetricsDefault];
     
-    // 1. 创建扫描器（如果没有自带NavigationController，则需要考虑self.view可能会将导航条遮挡。）
+    // 1. 创建扫描器
     TF_QRScanner *QRScanner = [[TF_QRScanner alloc] initWithFrame:CGRectMake(0, 64, self.view.frame.size.width, self.view.frame.size.height - 64)];
-    
-//    // 2. 配置扫描器（可选；不配置则为默认的参数。）
-//    // 设置扫描框（200*200像素。）
-//    QRScanner.scanFrameImage = [UIImage imageNamed:@"scanFrameCopy.png"];
-//    // 设置扫描线（200*10像素。）
-//    QRScanner.scanLineImage = [UIImage imageNamed:@"scanLineCopy.png"];
-//    // 设置提示信息（如果不设置或设置为nil，则消息内容默认为：“请将扫描框对准二维码”。）
-//    QRScanner.tipMessage = @"请将扫描框对准二维码";
-//    // 设置是否隐藏照明灯按钮（默认为NO，即不隐藏。）
-//    QRScanner.hiddenLightingButton = YES;
-//    // 设置提扫描成功的提示方式（可选：仅声音、仅振动、声音和振动、无声音和振动，默认是：仅声音。）
-//    QRScanner.playAudioMode = PlayAudioModeOnlyAudio;
-//    // 设置扫描线扫描一次所需要的时间（范围：0.5s ~ 5.0s，默认时间为：1.5s。）
-//    QRScanner.scanTime = 1.5;
-    
+
+    // 2. 配置扫描器（可选；不配置则为默认的参数。）
+    // 设置扫描框（scanFrame.png）
+    // QRScanner.scanFrameImage = [UIImage imageNamed:@"scanFrameCopy.png"];
+    // 设置扫描线（scanLine.png）
+    // QRScanner.scanLineImage = [UIImage imageNamed:@"scanLineCopy.png"];
+    // 设置提示信息（如果不设置或设置为nil，则消息内容默认为：“请将扫描框对准二维码”。）
+    // QRScanner.tipMessage = @"请将扫描框对准二维码";
+    // 设置是否隐藏照明灯按钮（默认为NO，即不隐藏。）
+    // QRScanner.hiddenLightingButton = YES;
+    // 设置提扫描成功的提示方式（可选：仅声音、仅振动、声音和振动、无声音和振动，默认是：仅声音。）
+    // QRScanner.playAudioMode = PlayAudioModeOnlyAudio;
+    // 设置扫描线扫描一次所需要的时间（范围：0.5s ~ 5.0s，默认时间为：1.5s。）
+    // QRScanner.scanTime = 1.5;
+    // 设置扫描窗口中心位置（默认在扫描器图层中心）
+    QRScanner.windowCenter = CGPointMake(CGRectGetMidX(QRScanner.bounds), CGRectGetMidY(QRScanner.bounds) - 50);
+
     // 3. 设置代理
     QRScanner.delegate = self;
     // 4. 添加到主视图
@@ -82,39 +84,15 @@
 }
 // 相机访问受限回调
 - (void)accessDeviceIsRestrictedByStatus:(AVAuthorizationStatus)status {
-    switch (status) {
-        case AVAuthorizationStatusRestricted: {// 受限制（可能是相机不可用）
-            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"相机使用受限或不可用"
-                                                                           message:nil
-                                                                    preferredStyle:UIAlertControllerStyleAlert];
-            
-            [alert addAction:[UIAlertAction actionWithTitle:NSLocalizedString(@"OK",@"确定")
-                                                      style:UIAlertActionStyleDefault
-                                                    handler:^(UIAlertAction * _Nonnull action) {
-                [self.navigationController popViewControllerAnimated:YES];// 退出界面
-            }]];
-            
-            [self presentViewController:alert animated:true completion:nil];
-        }
-            break;
-        case AVAuthorizationStatusDenied: {// 被用户明确拒绝显示
-            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"提示"
-                                                                           message:@"请在设备的\"设置-隐私-相机\"中允许访问相机。"
-                                                                    preferredStyle:UIAlertControllerStyleAlert];
-            [alert addAction:[UIAlertAction actionWithTitle:NSLocalizedString(@"OK",@"确定")
-                                                      style:UIAlertActionStyleDefault
-                                                    handler:^(UIAlertAction * _Nonnull action) {
-                                                        
-                [self.navigationController popViewControllerAnimated:YES];// 退出界面
-            }]];
-            [self presentViewController:alert animated:true completion:nil];
-        }
-            break;
-        case AVAuthorizationStatusNotDetermined: // 用户未作出选择(权限未知)
-            break;
-        default:
-            break;
+    if (status == AVAuthorizationStatusRestricted) {
+        // 受限制（没有发现相机或者相机被其它程序占用了）
+        [[[UIAlertView alloc] initWithTitle:@"相机不可用" message:@"没有发现相机或者相机被其它程序占用了" delegate:nil cancelButtonTitle:@"确定" otherButtonTitles:nil] show];
+    } else if (status == AVAuthorizationStatusDenied) {
+        // 用户拒绝程序使用相机
+        [[[UIAlertView alloc] initWithTitle:@"你已拒绝程序使用相机" message:@"请在设备的\"设置-隐私-相机\"中允许访问相机。" delegate:nil cancelButtonTitle:@"确定" otherButtonTitles:nil] show];
     }
+    // 回到上一个界面
+    [self.navigationController popViewControllerAnimated:YES];
 }
 
 #pragma mark - 按钮的点击事件loadWebPage

@@ -1,10 +1,24 @@
-//
-//  TF_QRScanner.m
-//  TF_QRCode
-//
-//  Created by apple on 16/7/27.
-//  Copyright © 2016年 legentec. All rights reserved.
-//
+/** The MIT License (MIT)
+ Copyright (c) 2016-2018 TF_QRScanner (https://github.com/teanfoo/TF_QRScanner)
+ 
+ Permission is hereby granted, free of charge, to any person obtaining a copy
+ of this software and associated documentation files (the "Software"), to deal
+ in the Software without restriction, including without limitation the rights
+ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ copies of the Software, and to permit persons to whom the Software is
+ furnished to do so, subject to the following conditions:
+ 
+ The above copyright notice and this permission notice shall be included in
+ all copies or substantial portions of the Software.
+ 
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ THE SOFTWARE.
+ */
 
 #import "TF_QRScanner.h"
 
@@ -32,17 +46,19 @@
 
 @property (strong, nonatomic) UILabel *lightingButtonLabel;// 照明按钮的标签
 
+@property (assign, nonatomic) BOOL screenAwaysAlight;// 控制是否屏幕常亮
+
 @end
 
 @implementation TF_QRScanner
 
-/*
- // Only override drawRect: if you perform custom drawing.
- // An empty implementation adversely affects performance during animation.
- - (void)drawRect:(CGRect)rect {
- // Drawing code
- }
- */
+#pragma mark - Setter
+/** 设置屏幕常亮 */
+- (void)setScreenAwaysAlight:(BOOL)screenAwaysAlight {
+    _screenAwaysAlight = screenAwaysAlight;
+    [UIApplication sharedApplication].idleTimerDisabled = screenAwaysAlight;
+}
+
 - (void)removeFromSuperview {
     [self stopScanning];
     [super removeFromSuperview];
@@ -79,93 +95,98 @@
  */
 - (void)startScanning {
     if (self.isScanning) return;// 正在扫描则退出。
-    self.isScanning = YES;
     
-    // 检查媒体内容的访问权限
+    // 1.检查媒体内容的访问权限
     AVAuthorizationStatus authStatus = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo];
-    if(authStatus == AVAuthorizationStatusRestricted) {
-        // 通知代理访问受限
+    __weak typeof(self) weakSelf = self;
+    if(authStatus == AVAuthorizationStatusRestricted || authStatus == AVAuthorizationStatusDenied) {
+        // 受限制（没有发现相机或者相机被其它程序占用了）或者 用户拒绝授权
         if ([self.delegate respondsToSelector:@selector(accessDeviceIsRestrictedByStatus:)]) {
-            [self.delegate accessDeviceIsRestrictedByStatus:AVAuthorizationStatusRestricted];
-        }
-        return;// 受限制（可能是相机不可用）
-    }
-    else if(authStatus == AVAuthorizationStatusDenied) {// 被用户明确拒绝显示
-        // 通知代理访问受限
-        if ([self.delegate respondsToSelector:@selector(accessDeviceIsRestrictedByStatus:)]) {
-            [self.delegate accessDeviceIsRestrictedByStatus:AVAuthorizationStatusDenied];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [weakSelf.delegate accessDeviceIsRestrictedByStatus:authStatus];
+            });
         }
         return;
-    }
-    else if(authStatus == AVAuthorizationStatusNotDetermined) {// 用户未作出选择
+    } else if(authStatus == AVAuthorizationStatusNotDetermined) {
+        // 首次弹窗询问用户是否授权
         [AVCaptureDevice requestAccessForMediaType:AVMediaTypeVideo completionHandler:^(BOOL granted) {
-            if(!granted) {
-                // 通知代理访问受限
-                if ([self.delegate respondsToSelector:@selector(accessDeviceIsRestrictedByStatus:)]) {
-                    [self.delegate accessDeviceIsRestrictedByStatus:AVAuthorizationStatusNotDetermined];
+            dispatch_async(dispatch_get_main_queue(), ^{// 必须回到主线程才能重新启动扫描器
+                if (!granted) {// 用户拒绝授权
+                    if ([weakSelf.delegate respondsToSelector:@selector(accessDeviceIsRestrictedByStatus:)]) {
+                        [weakSelf.delegate accessDeviceIsRestrictedByStatus:AVAuthorizationStatusDenied];
+                    }
+                } else {// 用户允许授权，重新启动扫描器
+                    [weakSelf startScanning];
                 }
-                return ;// 用户选择了拒绝显示
-            }
+            });
         }];
+        return;
     }
-    //    else if(authStatus == AVAuthorizationStatusAuthorized) // 允许显示媒体内容
-    //        NSLog(@"允许显示媒体内容");
     
-    // 1.获取输入设备
+    // 2.获取输入设备
     self.device = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
     
-    // 2.创建输入对象
+    // 3.创建输入对象
     NSError *error;
     AVCaptureDeviceInput *inPut = [[AVCaptureDeviceInput alloc] initWithDevice:self.device error:&error];
-    // 记录设备是否可用
-    if (inPut == nil) {
-        // 通知代理访问受限
+    if (inPut == nil) {// 相机访问不可用
         if ([self.delegate respondsToSelector:@selector(accessDeviceIsRestrictedByStatus:)]) {
-            [self.delegate accessDeviceIsRestrictedByStatus:AVAuthorizationStatusRestricted];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [weakSelf.delegate accessDeviceIsRestrictedByStatus:AVAuthorizationStatusRestricted];
+            });
         }
         return;
     }
     
-    // 3.创建输出对象
+    // 4.创建输出对象
     AVCaptureMetadataOutput *outPut = [[AVCaptureMetadataOutput alloc] init];
     
-    // 4.设置代理监听输出对象的输出流
+    // 5.设置代理监听输出对象的输出流
     //   使用主线程队列，相应比较同步；使用其他队列，相应不同步，影响用户体验。
     [outPut setMetadataObjectsDelegate:self queue:dispatch_get_main_queue()];
     
-    // 5.创建会话
+    // 6.创建会话
     self.session = [[AVCaptureSession alloc] init];
-    self.session.sessionPreset = AVCaptureSessionPreset1920x1080;// 提高画面质量，即使是很小的二维码也能快速扫描。
+    self.session.sessionPreset = AVCaptureSessionPresetHigh;
     
-    // 6.将输入和输出对象添加到会话
+    // 7.将输入对象添加到会话
     if ([self.session canAddInput:inPut]) {
         [self.session addInput:inPut];
     }
+    
+    // 8.将输出对象添加到会话，告诉输出对象, 需要输出什么样的数据
     if ([self.session canAddOutput:outPut]) {
         [self.session addOutput:outPut];
+        // 提示：一定要先设置会话的输出为output之后，再指定输出的元数据类型！
+        if ([outPut.availableMetadataObjectTypes containsObject:AVMetadataObjectTypeQRCode]) {
+            [outPut setMetadataObjectTypes:@[AVMetadataObjectTypeQRCode]];
+        } else {// 相机访问不可用
+            if ([self.delegate respondsToSelector:@selector(accessDeviceIsRestrictedByStatus:)]) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [weakSelf.delegate accessDeviceIsRestrictedByStatus:AVAuthorizationStatusRestricted];
+                });
+            }
+            return;
+        }
     }
     
-    // 7.告诉输出对象, 需要输出什么样的数据  // 提示：一定要先设置会话的输出为output之后，再指定输出的元数据类型！
-    [outPut setMetadataObjectTypes:@[AVMetadataObjectTypeQRCode]];
-    
-    // 8.创建预览图层
+    // 9.创建预览图层
     // 注意: 预览层的frame一定是按比例（session.sessionPreset 设置的比例，这里设置的是1920x1080）显示的。
     AVCaptureVideoPreviewLayer *preViewLayer = [AVCaptureVideoPreviewLayer layerWithSession:self.session];
     preViewLayer.frame = CGRectMake(0,
                                     0,
                                     self.frame.size.width,// 限定宽度
                                     self.frame.size.width * (1920.0/1080.0) + 1);
-    //    NSLog(@"preViewLayer.width:%f -- preViewLayer.height:%f",self.preViewLayer.frame.size.width, self.preViewLayer.frame.size.height);
     [self.layer insertSublayer:preViewLayer atIndex:0];
     
-    // 9.设置扫描框、遮罩视图、提示标签、照明按钮、照明按钮的标签
+    // 10.设置扫描框、遮罩视图、提示标签、照明按钮、照明按钮的标签
     [self addSubview:self.scanFrame];// 扫描框
     [self addSubview:self.coveringView];// 遮罩视图
     [self addSubview:self.tipLabel];// 提示标签
     [self addSubview:self.lightingButton];// 照明按钮
     [self addSubview:self.lightingButtonLabel];// 照明按钮的标签
     
-    // 10.设置扫面范围
+    // 11.设置扫面范围
     // 注意:
     // 1. rectOfInterest要求的CGRect格式为:CGRectMake(y, x, height, width);
     // 2. CGRectMake(）中参数取值范围都为比例值，即:0.0 ~ 1.0;
@@ -176,10 +197,14 @@
                                        self.scanFrame.frame.size.width / preViewLayer.frame.size.width);
     
     
-    // 开始扫描
+    // 12.开始扫描
+    self.isScanning = YES;
     self.scanLineStopScanning = NO;
     [self.session startRunning];
     [self scanLineScanning];
+    
+    // 13.开启屏幕常亮
+    self.screenAwaysAlight = YES;
 }
 /*!
  @method 停止扫描
@@ -205,6 +230,9 @@
     
     // 4. 扫描标识置为NO
     self.isScanning = NO;
+    
+    // 5. 关闭屏幕常亮
+    self.screenAwaysAlight = NO;
 }
 /*!
  @method 扫描线循环扫描
@@ -278,7 +306,7 @@
  */
 - (void)onLightingButtonClick {
     // 1. 检测设备是否可用
-    if (!self.device.hasTorch) return;// 设备没有照明灯组件
+    if (!self.device.hasTorch) return;
     
     // 2. 锁定配置，申请控制设备。
     [self.device lockForConfiguration:nil];
@@ -302,11 +330,34 @@
     [self.device unlockForConfiguration];
 }
 
-#pragma mark - 懒加载
+#pragma mark - Getter
 - (UIImageView *)scanFrame {
     if (_scanFrame == nil) {// 用户没有设置扫描框
-        _scanFrame = [[UIImageView alloc] initWithFrame:CGRectMake(0.5*self.frame.size.width-100, 0.5*self.frame.size.height-150, 200, 200)];
+        // 调整扫描窗口的显示位置
+        CGFloat windowWidth = self.frame.size.width * 0.6;
+        CGFloat flexibleX, flexibleY;
+        if (CGPointEqualToPoint(self.windowCenter, CGPointZero)) {// 扫描窗口默认在中心
+            flexibleX = self.frame.size.width / 2;
+            flexibleY = self.frame.size.height / 2;
+        } else {// 调整位置到可显示的范围
+            
+            if (self.windowCenter.x < windowWidth / 2)
+                flexibleX = windowWidth / 2;
+            else if (self.windowCenter.x > self.frame.size.width - windowWidth / 2)
+                flexibleX = self.frame.size.width - windowWidth / 2;
+            else
+                flexibleX = self.windowCenter.x;
+            if (self.windowCenter.y < windowWidth / 2)
+                flexibleY = windowWidth / 2;
+            else if (self.windowCenter.y > self.frame.size.height - windowWidth / 2)
+                flexibleY = self.frame.size.height - windowWidth / 2;
+            else
+                flexibleY = self.windowCenter.y;
+        }
+        self.windowCenter = CGPointMake(flexibleX, flexibleY);
         
+        _scanFrame = [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, windowWidth, windowWidth)];
+        _scanFrame.center = self.windowCenter;
         if (self.scanFrameImage == nil)
             _scanFrame.image = [UIImage imageNamed:[@"TF_QRScanner.bundle" stringByAppendingPathComponent:@"scanFrame"]];
         else
@@ -320,7 +371,7 @@
 
 - (UIImageView *)scanLine {
     if (_scanLine == nil) {// 用户没有设置扫描线
-        _scanLine = [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, self.scanFrame.frame.size.width, 10)];// 根据扫描框的宽度设置frame
+        _scanLine = [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, CGRectGetWidth(self.scanFrame.frame), 10)];// 根据扫描框的宽度设置frame
         
         if (self.scanLineImage == nil)
             _scanLine.image = [UIImage imageNamed:[@"TF_QRScanner.bundle" stringByAppendingPathComponent:@"scanLine"]];
@@ -343,27 +394,27 @@
         UIView *topCovering = [[UIView alloc] initWithFrame:CGRectMake(0,
                                                                        0,
                                                                        self.frame.size.width,
-                                                                       self.scanFrame.frame.origin.y)];
+                                                                       CGRectGetMinY(self.scanFrame.frame))];
         topCovering.backgroundColor = coveringColor;
         
         UIView *leftCovering = [[UIView alloc] initWithFrame:CGRectMake(0,
-                                                                        self.scanFrame.frame.origin.y,
-                                                                        self.scanFrame.frame.origin.x,
-                                                                        self.scanFrame.frame.size.height)];
+                                                                        CGRectGetMinY(self.scanFrame.frame),
+                                                                        CGRectGetMinX(self.scanFrame.frame),
+                                                                        CGRectGetHeight(self.scanFrame.frame))];
         leftCovering.backgroundColor = coveringColor;
         
         UIView *bottomCovering = [[UIView alloc] initWithFrame:CGRectMake
                                   (0,
-                                   self.scanFrame.frame.origin.y + self.scanFrame.frame.size.height,
+                                   CGRectGetMaxY(self.scanFrame.frame),
                                    self.frame.size.width,
-                                   self.frame.size.height - (self.scanFrame.frame.origin.y + self.scanFrame.frame.size.height))];
+                                   self.frame.size.height - CGRectGetMaxY(self.scanFrame.frame))];
         bottomCovering.backgroundColor = coveringColor;
         
         UIView *rightCovering = [[UIView alloc] initWithFrame:CGRectMake
-                                 (self.scanFrame.frame.origin.x + self.scanFrame.frame.size.width,
-                                  self.scanFrame.frame.origin.y,
-                                  self.frame.size.width - (self.scanFrame.frame.origin.x + self.scanFrame.frame.size.width),
-                                  self.scanFrame.frame.size.height)];
+                                 (CGRectGetMaxX(self.scanFrame.frame),
+                                  CGRectGetMinY(self.scanFrame.frame),
+                                  self.frame.size.width - CGRectGetMaxX(self.scanFrame.frame),
+                                  CGRectGetHeight(self.scanFrame.frame))];
         rightCovering.backgroundColor = coveringColor;
         
         [_coveringView addSubview:topCovering];
@@ -376,9 +427,9 @@
 
 - (UILabel *)tipLabel {
     if (_tipLabel == nil) {
-        _tipLabel = [[UILabel alloc] initWithFrame:CGRectMake(self.scanFrame.frame.origin.x,
-                                                              self.scanFrame.frame.origin.y + self.scanFrame.frame.size.height,
-                                                              self.scanFrame.frame.size.width,
+        _tipLabel = [[UILabel alloc] initWithFrame:CGRectMake(CGRectGetMinX(self.scanFrame.frame),
+                                                              CGRectGetMaxY(self.scanFrame.frame),
+                                                              CGRectGetWidth(self.scanFrame.frame),
                                                               30)];// 自身高度为20像素。
         _tipLabel.backgroundColor = [UIColor clearColor];
         if (self.tipMessage == nil)
@@ -395,11 +446,11 @@
 
 - (UIButton *)lightingButton {
     if (_lightingButton == nil) {
-        _lightingButton = [[UIButton alloc] initWithFrame:CGRectMake((self.frame.size.width-60)/2,
-                                                                     self.frame.size.height-85,
-                                                                     60,
-                                                                     60)];
-        _lightingButton.backgroundColor = [UIColor lightGrayColor];
+        _lightingButton = [[UIButton alloc] initWithFrame:CGRectMake((self.frame.size.width-40)/2,
+                                                                     self.frame.size.height-65,
+                                                                     40,
+                                                                     40)];
+        _lightingButton.backgroundColor = [UIColor clearColor];
         _lightingButton.hidden = self.hiddenLightingButton;
         NSString *imageNamed = [@"TF_QRScanner.bundle" stringByAppendingPathComponent:@"lightingOff"];
         [_lightingButton setImage:[UIImage imageNamed:imageNamed] forState:UIControlStateNormal];
@@ -414,9 +465,9 @@
 - (UILabel *)lightingButtonLabel {
     if (_lightingButtonLabel == nil) {
         _lightingButtonLabel = [[UILabel alloc] initWithFrame:CGRectMake
-                                (self.lightingButton.frame.origin.x,
-                                 self.lightingButton.frame.origin.y + self.lightingButton.frame.size.height,
-                                 self.lightingButton.frame.size.width,
+                                (CGRectGetMinX(self.lightingButton.frame),
+                                 CGRectGetMaxY(self.lightingButton.frame),
+                                 CGRectGetWidth(self.lightingButton.frame),
                                  25)];
         _lightingButtonLabel.backgroundColor = [UIColor clearColor];
         _lightingButtonLabel.hidden = self.hiddenLightingButton;
@@ -427,4 +478,75 @@
     }
     return _lightingButtonLabel;
 }
+
+- (BOOL)hiddenLightingButton {
+    // 闪光灯硬件不可以则返回YES（不显示开关灯按钮），否则返回用户设置的实际值
+    return self.device.hasTorch ? _hiddenLightingButton : YES;
+}
+
+#pragma mark - 解析图片中的二维码
+/** 解析图片中的二维码 */
++ (void)parsingQRCodeImage:(UIImage *)image completion:(void(^)(NSString *result, NSString *msg))completion {
+    if (!completion) return;
+    if (!image) {
+        completion (nil, @"error:image is nil!");
+        return;
+    }
+    // 创建检测器并设置好检测质量
+    CIDetector *detector = [CIDetector detectorOfType:CIDetectorTypeQRCode context:nil options:@{CIDetectorAccuracy:CIDetectorAccuracyHigh}];
+    // 检测到的特征（二维码信息）列表
+    NSArray *features = [detector featuresInImage:[CIImage imageWithCGImage:image.CGImage]];
+    if (features.count == 0) {
+        completion (nil, @"note:Not found QRCode!");
+    } else {
+        CIQRCodeFeature *feature = features.firstObject;
+        completion (feature.messageString, @"success!");
+    }
+}
+
+#pragma mark - 生成二维码
++ (UIImage *)createQRImageWithString:(NSString *)string size:(CGFloat)size logo:(UIImage *)logo {
+    if (string.length == 0) {
+        NSLog(@"error:string is nil!");
+        return nil;
+    }
+    if (size < 50.0) {
+        NSLog(@"error:size is too small! (<50.0)");
+        return nil;
+    }
+    CIFilter *filter = [CIFilter filterWithName:@"CIQRCodeGenerator"];
+    [filter setDefaults];
+    NSData *data = [string dataUsingEncoding:NSUTF8StringEncoding];
+    [filter setValue:data forKeyPath:@"inputMessage"];
+    [filter setValue:@"H" forKey:@"inputCorrectionLevel"];
+    CIImage *ciImage = [filter outputImage];
+    CGRect extent = CGRectIntegral(ciImage.extent);
+    CGFloat scale = MIN(size/CGRectGetWidth(extent), size/CGRectGetHeight(extent));
+    size_t width = CGRectGetWidth(extent) * scale;
+    size_t height = CGRectGetHeight(extent) * scale;
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceGray();
+    CGContextRef bitmapRef = CGBitmapContextCreate(nil, width, height, 8, 0, cs, (CGBitmapInfo)kCGImageAlphaNone);
+    CIContext *context = [CIContext contextWithOptions:nil];
+    CGImageRef bitmapImage = [context createCGImage:ciImage fromRect:extent];
+    CGContextSetInterpolationQuality(bitmapRef, kCGInterpolationNone);
+    CGContextScaleCTM(bitmapRef, scale, scale);
+    CGContextDrawImage(bitmapRef, extent, bitmapImage);
+    CGImageRef scaledImage = CGBitmapContextCreateImage(bitmapRef);
+    UIImage *outputImage = [UIImage imageWithCGImage:scaledImage];
+    CGContextRelease(bitmapRef);
+    CGImageRelease(bitmapImage);
+    
+    size *= [UIScreen mainScreen].scale;
+    CGRect imageRect = CGRectMake(0, 0, size, size);
+    CGFloat logoSize = size * 0.25;
+    CGRect logoRect = CGRectMake((size - logoSize) / 2, (size - logoSize) / 2, logoSize, logoSize);
+    UIGraphicsBeginImageContextWithOptions(imageRect.size, NO, 0.0f);
+    [outputImage drawInRect:imageRect];
+    [logo drawInRect:logoRect];
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    
+    return image;
+}
+
 @end
